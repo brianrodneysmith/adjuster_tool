@@ -239,7 +239,7 @@ def calculate_weather_factor(temp_f, humidity_pct):
 def render_how_estimate_works(adjustment_key):
     if adjustment_key == "age":
         with st.expander("How the age estimate works"):
-            st.write("This app uses standard road age-grading tables to estimate how your performance compares across ages. The tables provide benchmark times for each age, gender, and distance. Your time is adjusted to an equivalent peak-age performance, then compared with the peak-age standard for that distance. Age grading is widely used in masters running, but it is still a comparison tool rather than a prediction of what you personally would have run at a younger age.")
+            st.write("This app uses standard road age-grading tables to estimate how your performance compares across ages. The tables provide benchmark times for each age, gender, and distance. Age grade compares your time with standard top performances for your age, gender, and distance. Your time is also adjusted to an equivalent peak-age performance when your age is covered by the tables. Age grading is a comparison tool rather than a prediction of what you personally would have run at a different age.")
     elif adjustment_key == "weather":
         with st.expander("How the weather estimate works"):
             st.write("Weather affects running mostly through heat stress and the body’s ability to cool itself. This app uses temperature and, when provided, humidity to estimate your equivalent pace in moderate weather. Temperature creates the baseline weather adjustment; when humidity is provided, a high dew point can add a modest extra penalty. The total adjustment is capped to avoid over-adjusting. Other tools, including VDOT, McMillan, and Running Writings, use different weather models, so their estimates may differ.")
@@ -273,17 +273,17 @@ def format_coordinates(lat, lon):
 
 def get_age_grade_label(pct_as_decimal):
     if pct_as_decimal >= 0.90:
-        return "World class"
+        return "world class"
     elif pct_as_decimal >= 0.80:
-        return "National class"
+        return "national class"
     elif pct_as_decimal >= 0.70:
-        return "Regional class"
+        return "regional class"
     elif pct_as_decimal >= 0.60:
-        return "Competitive recreational"
+        return "competitive recreational"
     elif pct_as_decimal >= 0.50:
-        return "Recreational"
+        return "recreational"
     else:
-        return "Developing"
+        return "developing"
 
 
 def col_letters_to_index(letters):
@@ -446,12 +446,6 @@ def interpolate_by_log_distance(distance_km, value_by_distance):
 
 
 def calculate_age_grading(actual_minutes, age, gender, distance_value, unit):
-    if age < 40:
-        return {
-            "applied": False,
-            "reason": "Age adjustment is not applied below age 40, which is within the typical peak-performance range.",
-        }
-
     distance_km = distance_value * 1.60934 if unit == "miles" else distance_value
 
     table = load_age_standard_table(gender)
@@ -462,7 +456,7 @@ def calculate_age_grading(actual_minutes, age, gender, distance_value, unit):
         max_age = max(age_standards.keys())
         return {
             "applied": False,
-            "reason": f"Age adjustment is available only for ages {min_age} through {max_age}.",
+            "reason": f"Age adjustment is available for ages covered by the age-grading tables. This table covers ages {min_age} through {max_age}.",
         }
 
     age_standard_seconds, lower_d, upper_d = interpolate_by_log_distance(
@@ -485,6 +479,7 @@ def calculate_age_grading(actual_minutes, age, gender, distance_value, unit):
         "open_standard_seconds": open_standard_seconds,
         "age_factor": age_factor,
         "age_adjusted_minutes": seconds_to_minutes(age_adjusted_seconds),
+        "age_adjusted_pace_close_to_actual": abs(age_adjusted_seconds - actual_seconds) / actual_seconds <= 0.005,
         "age_grade_pct": age_grade_pct,
         "age_grade_label": get_age_grade_label(age_grade_pct),
         "interpolated": lower_d != upper_d,
@@ -701,7 +696,7 @@ st.write(
     """
 This tool estimates how your running result might look after adjusting for selected factors:
 **age**, **weather**, **hills**, and **altitude**. You can enter run information manually,
-or upload a **TCX or GPX file** to auto-fill distance, moving time, elevation gain, and elevation loss.
+or upload a **TCX or GPX file** to auto-fill distance, time, elevation gain, and elevation loss.
 """
 )
 
@@ -829,105 +824,32 @@ with runner_col1:
 with runner_col2:
     gender = st.selectbox("Gender", ["male", "female"])
 
-st.markdown("### Run Details")
-distance_setting_col1, distance_setting_col2 = st.columns(2)
-with distance_setting_col1:
-    unit = st.selectbox(
-        "Distance unit",
-        ["miles", "km"],
-        key="distance_unit_selector",
-        on_change=sync_distance_on_unit_change,
-    )
-with distance_setting_col2:
-    distance_preset = st.selectbox(
-        "Distance preset",
-        preset_options,
-        key="distance_preset_selector",
-        on_change=sync_distance_from_preset,
-    )
-
-with st.form("pace_adjuster_form"):
-    st.markdown("### Distance and Adjustment Details")
-    detail_col1, detail_col2 = st.columns(2)
-
-    with detail_col1:
-        distance_input = st.number_input(
-            f"Distance ({unit})",
-            min_value=0.1,
-            step=0.1,
-            key="distance_input_value",
+with st.container(border=True):
+    st.markdown("### Run Details")
+    run_detail_col1, run_detail_col2 = st.columns(2)
+    with run_detail_col1:
+        unit = st.selectbox(
+            "Distance unit",
+            ["miles", "km"],
+            key="distance_unit_selector",
+            on_change=sync_distance_on_unit_change,
+        )
+    with run_detail_col2:
+        distance_preset = st.selectbox(
+            "Distance preset",
+            preset_options,
+            key="distance_preset_selector",
+            on_change=sync_distance_from_preset,
         )
 
-        if use_weather:
-            st.caption("Enter temperature, humidity, or both. If you enter both, the app uses them together to estimate the weather effect.")
+    distance_input = st.number_input(
+        f"Distance ({unit})",
+        min_value=0.1,
+        step=0.1,
+        key="distance_input_value",
+    )
 
-            weather_col1, weather_col2 = st.columns(2)
-            with weather_col1:
-                use_temperature_input = st.checkbox("Use temperature", value=True)
-                temperature_f = st.number_input(
-                    "Temperature (°F)",
-                    min_value=-20.0,
-                    max_value=130.0,
-                    value=60.0,
-                    step=1.0
-                )
-            with weather_col2:
-                use_humidity_input = st.checkbox("Use humidity", value=False)
-                humidity = st.number_input(
-                    "Humidity (%)",
-                    min_value=0.0,
-                    max_value=100.0,
-                    value=50.0,
-                    step=1.0
-                )
-        else:
-            use_temperature_input = False
-            use_humidity_input = False
-            temperature_f = None
-            humidity = None
-
-    with detail_col2:
-        if use_grade:
-            elevation_unit = st.selectbox("Elevation unit", ["feet", "meters"])
-
-            default_gain = 0.0
-            default_loss = 0.0
-            if activity_data:
-                if elevation_unit == "feet":
-                    default_gain = activity_data["elevation_gain_ft"] or 0.0
-                    default_loss = activity_data["elevation_loss_ft"] or 0.0
-                else:
-                    default_gain = activity_data["elevation_gain_m"] or 0.0
-                    default_loss = activity_data["elevation_loss_m"] or 0.0
-
-            elevation_gain = st.number_input(
-                f"Elevation gain ({elevation_unit})",
-                min_value=0.0,
-                value=float(default_gain),
-                step=10.0,
-            )
-            elevation_loss = st.number_input(
-                f"Elevation loss ({elevation_unit})",
-                min_value=0.0,
-                value=float(default_loss),
-                step=10.0,
-            )
-        else:
-            elevation_unit = "feet"
-            elevation_gain = 0.0
-            elevation_loss = 0.0
-
-        if use_altitude:
-            altitude_ft = st.number_input(
-                "Average altitude (feet above sea level)",
-                min_value=0.0,
-                value=0.0,
-                step=100.0,
-            )
-        else:
-            altitude_ft = 0.0
-
-    st.markdown("### Moving Time")
+    st.markdown("#### Time")
     time_col1, time_col2, time_col3 = st.columns(3)
 
     default_hours = 0
@@ -946,7 +868,81 @@ with st.form("pace_adjuster_form"):
     with time_col3:
         seconds = st.number_input("Seconds", min_value=0, max_value=59, value=int(default_seconds), step=1)
 
-    submitted = st.form_submit_button("Calculate")
+    if use_weather or use_grade or use_altitude:
+        st.markdown("### Adjustment Details")
+
+    if use_weather:
+        st.caption("Enter temperature, humidity, or both. If you enter both, the app uses them together to estimate the weather effect.")
+
+        weather_col1, weather_col2 = st.columns(2)
+        with weather_col1:
+            use_temperature_input = st.checkbox("Use temperature", value=True)
+            temperature_f = st.number_input(
+                "Temperature (°F)",
+                min_value=-20.0,
+                max_value=130.0,
+                value=60.0,
+                step=1.0
+            )
+        with weather_col2:
+            use_humidity_input = st.checkbox("Use humidity", value=False)
+            humidity = st.number_input(
+                "Humidity (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=50.0,
+                step=1.0
+            )
+    else:
+        use_temperature_input = False
+        use_humidity_input = False
+        temperature_f = None
+        humidity = None
+
+    if use_grade:
+        elevation_unit = st.selectbox("Elevation unit", ["feet", "meters"])
+
+        default_gain = 0.0
+        default_loss = 0.0
+        if activity_data:
+            if elevation_unit == "feet":
+                default_gain = activity_data["elevation_gain_ft"] or 0.0
+                default_loss = activity_data["elevation_loss_ft"] or 0.0
+            else:
+                default_gain = activity_data["elevation_gain_m"] or 0.0
+                default_loss = activity_data["elevation_loss_m"] or 0.0
+
+        elevation_col1, elevation_col2 = st.columns(2)
+        with elevation_col1:
+            elevation_gain = st.number_input(
+                f"Elevation gain ({elevation_unit})",
+                min_value=0.0,
+                value=float(default_gain),
+                step=10.0,
+            )
+        with elevation_col2:
+            elevation_loss = st.number_input(
+                f"Elevation loss ({elevation_unit})",
+                min_value=0.0,
+                value=float(default_loss),
+                step=10.0,
+            )
+    else:
+        elevation_unit = "feet"
+        elevation_gain = 0.0
+        elevation_loss = 0.0
+
+    if use_altitude:
+        altitude_ft = st.number_input(
+            "Average altitude (feet above sea level)",
+            min_value=0.0,
+            value=0.0,
+            step=100.0,
+        )
+    else:
+        altitude_ft = 0.0
+
+    submitted = st.button("Calculate")
 
 if submitted:
     raw_time_minutes = hours * 60 + minutes + seconds / 60
@@ -954,7 +950,7 @@ if submitted:
     if distance_input <= 0:
         st.error("Distance must be greater than zero.")
     elif raw_time_minutes <= 0:
-        st.error("Moving time must be greater than zero.")
+        st.error("Time must be greater than zero.")
     else:
         raw_pace = raw_time_minutes / distance_input
 
@@ -1061,16 +1057,20 @@ if submitted:
                 if age_result.get("applied"):
                     age_adjusted_pace = age_result["age_adjusted_minutes"] / distance_input
                     age_grade_pct = age_result["age_grade_pct"] * 100
+                    near_peak_age_note = ""
+                    if age_result.get("age_adjusted_pace_close_to_actual"):
+                        near_peak_age_note = " Because you are near the peak-age range, the age-adjusted pace is very close to your actual pace."
+
                     individual_messages.append((
                         "write",
                         f"**Age:** Your performance is equivalent to a pace of "
                         f"{format_pace(age_adjusted_pace, unit)} for a peak-age runner of similar ability, "
-                        f"based on standard age-grading tables."
+                        f"based on standard age-grading tables.{near_peak_age_note}"
                     ))
                     individual_messages.append((
                         "write",
-                        f"This corresponds to an age grade of {age_grade_pct:.1f}%, meaning your performance is "
-                        f"{age_grade_pct:.1f}% as strong as the peak-age standard for this distance after adjusting your time for your age."
+                        f"This corresponds to an age grade of {age_grade_pct:.1f}%. Age grade compares your time "
+                        f"with standard top performances for your age, gender, and distance."
                     ))
                     individual_messages.append((
                         "write",
