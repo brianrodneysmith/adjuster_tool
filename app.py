@@ -488,6 +488,82 @@ def calculate_age_grading(actual_minutes, age, gender, distance_value, unit):
     }
 
 
+
+def calculate_equivalent_paces_by_age(age_grade_pct, current_age, gender, distance_value, unit, years_back=10, years_forward=10):
+    """
+    Calculate paces at nearby ages that would produce the same age grade.
+    These are age-graded equivalents, not predictions.
+    """
+    distance_km = distance_value * 1.60934 if unit == "miles" else distance_value
+    table = load_age_standard_table(gender)
+    age_standards = table["age_standards"]
+
+    def build_rows(age_values):
+        rows = []
+        for target_age in age_values:
+            if target_age not in age_standards:
+                continue
+
+            target_standard_seconds, _, _ = interpolate_by_log_distance(
+                distance_km, age_standards[target_age]
+            )
+            equivalent_seconds = target_standard_seconds / age_grade_pct
+            equivalent_minutes = seconds_to_minutes(equivalent_seconds)
+            equivalent_pace = equivalent_minutes / distance_value
+
+            rows.append({
+                "Age": target_age,
+                "Equivalent pace": format_pace(equivalent_pace, unit),
+                "Equivalent race time": format_time_from_minutes(equivalent_minutes),
+            })
+        return rows
+
+    past_ages = range(current_age - years_back, current_age)
+    future_ages = range(current_age + 1, current_age + years_forward + 1)
+
+    return {
+        "past": build_rows(past_ages),
+        "future": build_rows(future_ages),
+        "min_age": min(age_standards.keys()),
+        "max_age": max(age_standards.keys()),
+    }
+
+
+def render_equivalent_paces_by_age(age_result, current_age, gender, distance_value, unit):
+    equivalent_rows = calculate_equivalent_paces_by_age(
+        age_grade_pct=age_result["age_grade_pct"],
+        current_age=current_age,
+        gender=gender,
+        distance_value=distance_value,
+        unit=unit,
+    )
+
+    with st.expander("Show equivalent paces across ages"):
+        st.write(
+            "These paces show what would produce the same age grade at other ages, "
+            "based on the same distance, gender, and age-grading table. They are not predictions of future performance."
+        )
+
+        future_tab, past_tab = st.tabs(["Future ages", "Past ages"])
+
+        with future_tab:
+            if equivalent_rows["future"]:
+                st.table(equivalent_rows["future"])
+            else:
+                st.info(
+                    f"No future ages are available within the table range "
+                    f"({equivalent_rows['min_age']}–{equivalent_rows['max_age']})."
+                )
+
+        with past_tab:
+            if equivalent_rows["past"]:
+                st.table(equivalent_rows["past"])
+            else:
+                st.info(
+                    f"No past ages are available within the table range "
+                    f"({equivalent_rows['min_age']}–{equivalent_rows['max_age']})."
+                )
+
 def build_rolling_grade_segments(points, target_segment_m=50):
     """
     Build grade segments over accumulated distance rather than point-to-point.
@@ -1083,6 +1159,7 @@ if submitted:
                             f"{age_result['lower_distance_km']:.2f} km and "
                             f"{age_result['upper_distance_km']:.2f} km."
                         ))
+                    individual_messages.append(("age_equivalent_expander", age_result))
                     individual_messages.append(("expander", "age"))
                 else:
                     individual_messages.append(("info", age_result.get("reason", "Age adjustment was not applied.")))
@@ -1170,6 +1247,14 @@ if submitted:
                 st.info(message)
             elif message_type == "error":
                 st.error(message)
+            elif message_type == "age_equivalent_expander":
+                render_equivalent_paces_by_age(
+                    age_result=message,
+                    current_age=int(age),
+                    gender=gender,
+                    distance_value=distance_input,
+                    unit=unit,
+                )
             elif message_type == "expander":
                 render_how_estimate_works(message)
 
